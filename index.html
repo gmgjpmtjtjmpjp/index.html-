@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<title>FN風 2D Aim Trainer (PC/モバイル対応)</title>
+<style>
+  :root{
+    --bg:#0d1220; --panel:#0b1220; --accent:#22d3ee; --muted:#9fb0c6; --danger:#ef4444;
+  }
+  *{box-sizing:border-box; user-select:none;}
+  html,body{margin:0;height:100%;background:linear-gradient(180deg,var(--bg),#09101b);color:#e8f1fb;font-family:system-ui,-apple-system,Segoe UI,Meiryo,Arial;}
+  canvas{display:block;width:100vw;height:100vh;cursor:none}
+  /* HUD */
+  #hud{position:fixed;top:10px;left:10px;background:rgba(0,0,0,.35);backdrop-filter:blur(4px);padding:10px 12px;border-radius:10px;display:flex;gap:14px;align-items:center;z-index:10}
+  .stat{font-size:14px;color:var(--muted)}
+  .stat b{color:#fff}
+  #controls{position:fixed;top:10px;right:10px;background:rgba(0,0,0,.35);backdrop-filter:blur(4px);padding:10px;border-radius:10px;display:flex;gap:8px;align-items:center;z-index:10}
+  input[type=text]{width:90px;padding:6px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.06);color:#fff}
+  button{background:var(--accent);color:#01202a;border:none;border-radius:10px;padding:8px 10px;font-weight:700;cursor:pointer}
+  button.ghost{background:transparent;color:var(--muted);border:1px solid rgba(255,255,255,.14)}
+  /* Mobile joystick */
+  #joystick{position:fixed;left:18px;bottom:18px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);display:none;z-index:10;touch-action:none}
+  #stick{position:absolute;left:50%;top:50%;width:64px;height:64px;transform:translate(-50%,-50%);border-radius:50%;background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.4)}
+  /* Mobile fire area (right side) */
+  #fireZone{position:fixed;right:0;top:0;width:55vw;height:100vh;z-index:9}
+  /* Bottom weapon image area */
+  #weaponWrap{position:fixed;left:50%;bottom:0;transform:translateX(-50%);height:26vh;pointer-events:none;opacity:.92;z-index:5}
+  #weapon{height:100%;filter:drop-shadow(0 8px 20px rgba(0,0,0,.5))}
+  /* Hide joystick on desktop, hide mouse crosshair cursor on mobile via JS */
+  .hidden{display:none !important;}
+</style>
+</head>
+<body>
+  <!-- HUD -->
+  <div id="hud">
+    <div class="stat">Score: <b id="score">0</b></div>
+    <div class="stat">Hit%: <b id="acc">0%</b></div>
+    <div class="stat">DMG: <b id="dmg">0</b></div>
+    <div class="stat">Assist: <b id="assist">OFF</b></div>
+  </div>
+  <!-- Controls -->
+  <div id="controls">
+    コード: <input type="text" id="codeInput" placeholder="7777">
+    <button id="codeBtn" class="ghost">OK</button>
+    <button id="resetBtn" class="ghost">リセット</button>
+  </div>
+  <!-- Virtual Joystick (Roblox風 左下固定) -->
+  <div id="joystick">
+    <div id="stick"></div>
+  </div>
+  <!-- Mobile Fire Zone (右側タップで発射) -->
+  <div id="fireZone"></div>
+  <!-- Weapon image (Fortnite風・シルエット寄りSVG) -->
+  <div id="weaponWrap">
+    <!-- リアル寄りシルエット（外部画像ではなくインラインSVGで軽量） -->
+    <svg id="weapon" viewBox="0 0 900 240" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="g" x1="0" x2="1">
+          <stop offset="0" stop-color="#1b2436"/>
+          <stop offset="1" stop-color="#2c384f"/>
+        </linearGradient>
+      </defs>
+      <g fill="url(#g)">
+        <rect x="60" y="100" width="640" height="36" rx="4"/>
+        <rect x="120" y="70" width="140" height="24" rx="3"/>
+        <rect x="280" y="70" width="140" height="24" rx="3"/>
+        <rect x="600" y="90" width="140" height="10" rx="3"/>
+        <rect x="706" y="96" width="140" height="8" rx="3"/>
+        <rect x="360" y="136" width="90" height="28" rx="5"/>
+        <path d="M430 164 h110 v46 h-70 l-40 -46 z"/>
+        <path d="M220 136 h100 v54 h-60 q-30 0 -40 -20 z"/>
+        <rect x="510" y="136" width="60" height="24" rx="3"/>
+        <rect x="720" y="98" width="60" height="18" rx="3"/>
+      </g>
+      <g fill="#0f1524" opacity=".6">
+        <rect x="60" y="132" width="640" height="6"/>
+        <rect x="360" y="164" width="90" height="6"/>
+      </g>
+    </svg>
+  </div>
+
+  <canvas id="game"></canvas>
+
+<script>
+(() => {
+  // ---- Setup / Canvas ----
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  function resize(){ canvas.width = innerWidth; canvas.height = innerHeight; }
+  addEventListener('resize', resize); resize();
+
+  const hud = {
+    score: document.getElementById('score'),
+    acc: document.getElementById('acc'),
+    dmg: document.getElementById('dmg'),
+    assist: document.getElementById('assist'),
+  };
+
+  const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  // Show joystick only on touch devices
+  const joystick = document.getElementById('joystick');
+  const stick = document.getElementById('stick');
+  const fireZone = document.getElementById('fireZone');
+  joystick.style.display = isTouch ? 'block' : 'none';
+  fireZone.style.display = isTouch ? 'block' : 'none';
+  // On touch devices we DO want the system cursor (none anyway on touch),
+  // On desktop we hide default cursor via canvas CSS and draw our own crosshair that follows mouse.
+
+  // ---- Game State ----
+  let score=0, shots=0, hits=0, totalDamage=0;
+  let aimAssist=false;
+
+  const TARGET_HP = 100;
+  const DMG = 50;        // 2発で破壊
+  const TARGET_MIN_R = 26, TARGET_MAX_R = 42;
+  const TARGET_COUNT = 6;
+
+  const targets = [];
+
+  function rand(a,b){ return a + Math.random()*(b-a); }
+  function spawnTarget(){
+    const pad = 70;
+    const r = rand(TARGET_MIN_R, TARGET_MAX_R);
+    const x = pad + Math.random()*(canvas.width - pad*2);
+    const y = pad + Math.random()*(canvas.height - pad*2);
+    targets.push({x,y,r,hp:TARGET_HP,phase:Math.random()*Math.PI*2,spd:rand(0.6,1.2),dir:Math.random()<.5?-1:1});
+  }
+  function ensureTargets(n=TARGET_COUNT){ while(targets.length<n) spawnTarget(); }
+
+  // ---- Crosshair Position ----
+  // PC: follows mouse. Mobile: fixed center + joystick offset
+  let cursor = { x: canvas.width/2, y: canvas.height/2 };
+  let mobileBase = { x: canvas.width/2, y: canvas.height/2 };
+  let joyVec = { x:0, y:0 };       // normalized -1..1
+  const JOY_RADIUS = 60;           // px radius for base circle
+  const JOY_MAX_OFFSET = 180;      // how far crosshair can move from center on mobile
+
+  // Desktop mouse move
+  if(!isTouch){
+    addEventListener('mousemove', e=>{
+      cursor.x = e.clientX;
+      cursor.y = e.clientY;
+    });
+    // Left click fire
+    canvas.addEventListener('mousedown', (e)=>{
+      if(e.button===0) fire();
+    });
+  }
+
+  // Mobile joystick handling
+  if(isTouch){
+    let dragging=false;
+    const rect = () => joystick.getBoundingClientRect();
+    const setStick = (dx,dy)=>{
+      // clamp to JOY_RADIUS
+      const len = Math.hypot(dx,dy);
+      const k = len>JOY_RADIUS ? JOY_RADIUS/len : 1;
+      const nx = dx*k, ny = dy*k;
+      stick.style.transform = `translate(calc(-50% + ${nx}px), calc(-50% + ${ny}px))`;
+      joyVec.x = nx/JOY_RADIUS;
+      joyVec.y = ny/JOY_RADIUS;
+    };
+    const resetStick = ()=>{ stick.style.transform='translate(-50%,-50%)'; joyVec.x=0; joyVec.y=0; };
+
+    joystick.addEventListener('touchstart', (e)=>{
+      dragging=true;
+      const t = e.touches[0];
+      const r = rect();
+      setStick(t.clientX - (r.left+r.width/2), t.clientY - (r.top+r.height/2));
+    }, {passive:true});
+    joystick.addEventListener('touchmove', (e)=>{
+      if(!dragging) return;
+      const t = e.touches[0];
+      const r = rect();
+      setStick(t.clientX - (r.left+r.width/2), t.clientY - (r.top+r.height/2));
+    }, {passive:true});
+    const end = ()=>{ dragging=false; resetStick(); };
+    joystick.addEventListener('touchend', end, {passive:true});
+    joystick.addEventListener('touchcancel', end, {passive:true});
+
+    // Right side tap to fire
+    fireZone.addEventListener('touchstart', ()=>{ fire(); }, {passive:true});
+  }
+
+  // ---- Assist Code ----
+  const codeInput = document.getElementById('codeInput');
+  const codeBtn = document.getElementById('codeBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  codeBtn.addEventListener('click', ()=>{
+    const v = (codeInput.value||'').trim();
+    aimAssist = (v === '7777');
+    hud.assist.textContent = aimAssist ? 'ON' : 'OFF';
+    alert(aimAssist?'エイムアシストON（完全ロックオン）':'エイムアシストOFF');
+  });
+  resetBtn.addEventListener('click', ()=>{
+    score=0; shots=0; hits=0; totalDamage=0;
+    targets.length = 0; ensureTargets();
+    updateHUD();
+  });
+
+  // ---- Shooting & Hit Test ----
+  function nearestTargetToPoint(px,py){
+    if(targets.length===0) return null;
+    let best=null, bd=Infinity;
+    for(const t of targets){
+      const d = Math.hypot(px-t.x, py-t.y);
+      if(d<bd){ bd=d; best=t; }
+    }
+    return best;
+  }
+  function hitAt(px,py){
+    // circle hit
+    for(let i=0;i<targets.length;i++){
+      const t=targets[i];
+      if(Math.hypot(px-t.x, py-t.y) <= t.r){
+        t.hp -= DMG;
+        totalDamage += DMG;
+        hits++;
+        if(t.hp<=0) targets.splice(i,1), score++;
+        return true;
+      }
+    }
+    return false;
+  }
+  function fire(){
+    shots++;
+    if(aimAssist){
+      const t = nearestTargetToPoint(cursor.x, cursor.y);
+      if(t){
+        // 完全ロックオン: そのターゲット中心にヒットさせる
+        hitAt(t.x, t.y);
+      }else{
+        hitAt(cursor.x, cursor.y);
+      }
+    }else{
+      hitAt(cursor.x, cursor.y);
+    }
+    updateHUD();
+  }
+
+  function updateHUD(){
+    hud.score.textContent = score;
+    hud.acc.textContent = shots? (hits/shots*100).toFixed(1)+'%':'0%';
+    hud.dmg.textContent = totalDamage;
+    hud.assist.textContent = aimAssist? 'ON':'OFF';
+  }
+
+  // ---- Update / Draw ----
+  let last = performance.now();
+  function update(dt){
+    // target gentle movement
+    for(const t of targets){
+      t.phase += t.spd*dt;
+      t.x += Math.sin(t.phase*0.9)*0.25*t.dir;
+      t.y += Math.cos(t.phase*0.7)*0.2*t.dir;
+      // bounds
+      const pad = t.r+10;
+      if(t.x<pad) t.x=pad; if(t.x>canvas.width-pad) t.x=canvas.width-pad;
+      if(t.y<pad) t.y=pad; if(t.y>canvas.height-pad) t.y=canvas.height-pad;
+    }
+    // Mobile crosshair = center + joystick offset
+    if(isTouch){
+      const cx = canvas.width/2, cy = canvas.height/2;
+      cursor.x = cx + joyVec.x * JOY_MAX_OFFSET;
+      cursor.y = cy + joyVec.y * JOY_MAX_OFFSET;
+    }
+    // keep targets count
+    ensureTargets();
+  }
+
+  function draw(){
+    // background
+    ctx.fillStyle = '#08101e';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    // targets
+    for(const t of targets){
+      // body
+      ctx.beginPath();
+      ctx.fillStyle = '#ef4444';
+      ctx.arc(t.x,t.y,t.r,0,Math.PI*2); ctx.fill();
+      // inner (white)
+      ctx.beginPath();
+      ctx.fillStyle = '#ffffff';
+      ctx.arc(t.x,t.y,t.r*0.5,0,Math.PI*2); ctx.fill();
+      // hp arc
+      ctx.strokeStyle = 'rgba(255,255,255,.75)';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      const ratio = Math.max(0,t.hp)/TARGET_HP;
+      ctx.arc(t.x,t.y,t.r+5,-Math.PI/2,-Math.PI/2+Math.PI*2*ratio);
+      ctx.stroke();
+    }
+
+    // crosshair (Fortnite風 十字)
+    ctx.save();
+    ctx.translate(cursor.x, cursor.y);
+    ctx.strokeStyle = '#22d3ee';
+    ctx.lineWidth = 2;
+    // small gap crosshair
+    const gap=6, len=14;
+    // left
+    ctx.beginPath(); ctx.moveTo(-gap-len,0); ctx.lineTo(-gap,0); ctx.stroke();
+    // right
+    ctx.beginPath(); ctx.moveTo(gap,0); ctx.lineTo(gap+len,0); ctx.stroke();
+    // top
+    ctx.beginPath(); ctx.moveTo(0,-gap-len); ctx.lineTo(0,-gap); ctx.stroke();
+    // bottom
+    ctx.beginPath(); ctx.moveTo(0,gap); ctx.lineTo(0,gap+len); ctx.stroke();
+    // center dot
+    ctx.fillStyle = '#22d3ee'; ctx.beginPath(); ctx.arc(0,0,1.6,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  function loop(now){
+    const dt = (now-last)/1000; last = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // Init
+  ensureTargets();
+  updateHUD();
+})();
+</script>
+</body>
+</html>
