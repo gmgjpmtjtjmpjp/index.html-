@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2D Aim Trainer with Aim Assist</title>
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    background: #222;
+    color: white;
+    font-family: sans-serif;
+    overflow: hidden;
+}
+#hud {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: rgba(0,0,0,0.5);
+    padding: 8px;
+    border-radius: 5px;
+}
+#controls {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(0,0,0,0.5);
+    padding: 8px;
+    border-radius: 5px;
+}
+canvas {
+    display: block;
+}
+</style>
+</head>
+<body>
+<div id="hud">
+    スコア: <span id="score">0</span>
+</div>
+<div id="controls">
+    コード: <input type="text" id="codeInput" size="4">
+    <button id="codeBtn">OK</button>
+</div>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let score = 0;
+let targets = [];
+const targetRadius = 30;
+let aimAssist = false;
+
+function spawnTarget() {
+    const x = Math.random() * (canvas.width - targetRadius * 2) + targetRadius;
+    const y = Math.random() * (canvas.height - targetRadius * 2) + targetRadius;
+    targets.push({x, y});
+}
+
+function drawTargets() {
+    targets.forEach(t => {
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, targetRadius, 0, Math.PI * 2);
+        ctx.fillStyle = "red";
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, targetRadius / 2, 0, Math.PI * 2);
+        ctx.fillStyle = "white";
+        ctx.fill();
+    });
+}
+
+function updateHUD() {
+    document.getElementById("score").textContent = score;
+}
+
+function gameLoop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawTargets();
+    updateHUD();
+    requestAnimationFrame(gameLoop);
+}
+
+function hitTest(x, y) {
+    for (let i = 0; i < targets.length; i++) {
+        const t = targets[i];
+        const dx = x - t.x;
+        const dy = y - t.y;
+        if (Math.sqrt(dx * dx + dy * dy) < targetRadius) {
+            targets.splice(i, 1);
+            score++;
+            spawnTarget();
+            break;
+        }
+    }
+}
+
+function getNearestTarget() {
+    if (targets.length === 0) return null;
+    let nearest = targets[0];
+    let minDist = Infinity;
+    targets.forEach(t => {
+        const dx = canvas.width / 2 - t.x;
+        const dy = canvas.height / 2 - t.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < minDist) {
+            minDist = dist;
+            nearest = t;
+        }
+    });
+    return nearest;
+}
+
+function shoot(x, y) {
+    if (aimAssist) {
+        // 最も近いターゲットにロックオン
+        const target = getNearestTarget();
+        if (target) {
+            hitTest(target.x, target.y);
+            return;
+        }
+    }
+    hitTest(x, y);
+}
+
+canvas.addEventListener("click", e => {
+    shoot(e.clientX, e.clientY);
+});
+
+canvas.addEventListener("touchstart", e => {
+    const touch = e.touches[0];
+    shoot(touch.clientX, touch.clientY);
+});
+
+// コード入力
+document.getElementById("codeBtn").addEventListener("click", () => {
+    const code = document.getElementById("codeInput").value.trim();
+    aimAssist = (code === "7777");
+    alert(aimAssist ? "エイムアシストON" : "エイムアシストOFF");
+});
+
+function startGame() {
+    score = 0;
+    targets = [];
+    for (let i = 0; i < 3; i++) spawnTarget();
+    gameLoop();
+}
+
+startGame();
+</script>
+</body>
+</html>
